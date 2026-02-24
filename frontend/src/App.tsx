@@ -6,6 +6,7 @@ import CancerDetection from './pages/cancerDetection'
 import OutbreakTracker from './pages/outbreakDetection'
 import ProtectedRoute from './routes/protectedRoute'
 import MainLayout from './components/mainLayout'
+import EhrDatabase from './pages/ehrDatabase'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/cancer-detection" element={<CancerDetection />} />
           <Route path="/outbreak-tracker" element={<OutbreakTracker />} />
+          <Route path="/ehr-database" element={<EhrDatabase />}/>
         </Route>
       </Route>
     </Routes>

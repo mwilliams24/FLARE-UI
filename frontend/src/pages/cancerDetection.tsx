@@ -1,361 +1,230 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState } from "react";
 import {
   Box,
-  Button,
-  MenuItem,
-  TextField,
   Typography,
+  TextField,
+  MenuItem,
+  Button,
+  Card,
+  CardContent,
   Divider,
   Alert,
-  CircularProgress,
-} from '@mui/material'
-import { useAuth0 } from '@auth0/auth0-react'
-import { createCaseAndRunModel } from '../api/cancerDetection'
-import type { CancerType, CreateCaseRequest, CaseResult } from '../api/types'
-
-type FormState = {
-  location: string
-  cancerType: CancerType | ''
-  firstName: string
-  lastName: string
-  medicalId: string
-  dob: string // YYYY-MM-DD
-}
+} from "@mui/material";
+import { predictScan, saveCase } from "../api/flareAPI";
+import type { CancerType, PredictResponse } from "../api/flareAPI";
 
 export default function CancerDetection() {
-  const { getAccessTokenSilently } = useAuth0()
+  const [location, setLocation] = useState("Houston");
+  const [cancerType, setCancerType] = useState<CancerType | "">("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [medicalId, setMedicalId] = useState("");
+  const [dob, setDob] = useState("");
 
-  const [form, setForm] = useState<FormState>({
-    location: 'Houston',
-    cancerType: '',
-    firstName: '',
-    lastName: '',
-    medicalId: '',
-    dob: '',
-  })
+  const [file, setFile] = useState<File | null>(null);
 
-  const [step, setStep] = useState<1 | 2>(1)
-  const [files, setFiles] = useState<FileList | null>(null)
+  const [loading, setLoading] = useState(false);
+  const [pred, setPred] = useState<PredictResponse | null>(null);
+  const [error, setError] = useState("");
 
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<CaseResult | null>(null)
+  const canUpload = useMemo(() => {
+    return Boolean(cancerType) && firstName && lastName && medicalId && dob && location;
+  }, [cancerType, firstName, lastName, medicalId, dob, location]);
 
-  const canGoNext = useMemo(() => {
-    return (
-      form.location.trim().length > 0 &&
-      form.cancerType !== '' &&
-      form.firstName.trim().length > 0 &&
-      form.lastName.trim().length > 0 &&
-      form.medicalId.trim().length > 0 &&
-      form.dob.trim().length > 0
-    )
-  }, [form])
+  const canSubmit = canUpload && file;
 
-  const canAnalyze = useMemo(() => {
-    return step === 2 && files && files.length > 0 && form.cancerType !== ''
-  }, [step, files, form.cancerType])
+  async function onRun() {
+    setError("");
+    setPred(null);
 
-  const handleChange =
-    (key: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => {
-      setForm((prev) => ({ ...prev, [key]: e.target.value }))
-    }
+    if (!cancerType) return setError("Please select a cancer type.");
+    if (!file) return setError("Please upload an image.");
 
-  const handleNext = () => {
-    setError(null)
-    if (!canGoNext) {
-      setError('Please complete all required fields.')
-      return
-    }
-    setStep(2)
-  }
-
-  const handleAnalyze = async () => {
-    setError(null)
-    setResult(null)
-
-    if (!canAnalyze) {
-      setError('Please upload at least one image to analyze.')
-      return
-    }
-
+    setLoading(true);
     try {
-      setLoading(true)
-      const token = await getAccessTokenSilently()
+      // 1) run correct model based on cancerType
+      const result = await predictScan({ cancerType, file });
+      setPred(result);
 
-      const payload: CreateCaseRequest = {
-        location: form.location,
-        cancerType: form.cancerType as CancerType,
-        patient: {
-          firstName: form.firstName,
-          lastName: form.lastName,
-          medicalId: form.medicalId,
-          dob: form.dob,
-        },
-      }
-
-      // Convert FileList -> File[]
-      const fileArray = Array.from(files ?? [])
-
-      const res = await createCaseAndRunModel(token, payload, fileArray)
-      setResult(res)
+      // 2) save patient data + AI result for EHR
+      await saveCase({
+        first_name: firstName,
+        last_name: lastName,
+        dob,
+        medical_id: medicalId,
+        location,
+        cancer_type: cancerType,
+        prediction: result.prediction,
+        confidence: result.confidence,
+        localization_url: result.localization_url ?? null,
+      });
     } catch (e: any) {
-      setError(e?.message ?? 'Something went wrong while running the scan.')
+      setError(e?.message ?? "Something went wrong.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   return (
-    <Box
-      sx={{
-        width: '100%',
-        minHeight: '100vh',
-        display: 'grid',
-        gridTemplateColumns: { xs: '1fr', lg: '1fr 1.4fr' },
-        gap: { xs: 5, lg: 10 },
-        px: { xs: 3, md: 8 },
-        pt: 14, // space below fixed header
-        pb: 8,
-        background:
-          'radial-gradient(circle at bottom right, #1b2335 0%, #0b0f19 60%)',
-      }}
-    >
-      {/* LEFT PANEL (big vertical text like screenshot) */}
-      <Box
+    <Box sx={{ px: { xs: 3, md: 10 }, py: 5 }}>
+      <Typography sx={{ color: "#fff", fontSize: "1.7rem", fontWeight: 800, mb: 1 }}>
+        AI Cancer Detection
+      </Typography>
+      <Typography sx={{ color: "rgba(255,255,255,0.65)", mb: 3 }}>
+        Enter patient data, select cancer type, then upload a scan to run the appropriate model.
+      </Typography>
+
+      <Card
         sx={{
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: '18px',
-          p: { xs: 4, md: 6 },
-          display: 'flex',
-          alignItems: 'center',
-          minHeight: { lg: 520 },
-          background:
-            'radial-gradient(circle at left center, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 60%, transparent 100%)',
+          backgroundColor: "rgba(0,0,0,0.30)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 3,
+          color: "#fff",
         }}
       >
-        <Typography
-          sx={{
-            color: 'rgba(255,255,255,0.35)',
-            fontSize: { xs: '2.2rem', md: '3rem' },
-            lineHeight: 1.3,
-            fontWeight: 500,
-          }}
-        >
-          Fusion-based
-          <br />
-          Learning for
-          <br />
-          Automated
-          <br />
-          Radiology and
-          <br />
-          Epidemiology
-        </Typography>
-      </Box>
-
-      {/* RIGHT PANEL (form like screenshot) */}
-      <Box
-        sx={{
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: '18px',
-          p: { xs: 4, md: 6 },
-          backgroundColor: 'rgba(0,0,0,0.25)',
-        }}
-      >
-        <Typography sx={{ color: '#fff', fontSize: '1.2rem', mb: 3 }}>
-          Cancer Detection
-        </Typography>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
-          </Alert>
-        )}
-
-        {/* STEP 1: Patient info */}
-        {step === 1 && (
-          <Box sx={{ display: 'grid', gap: 3 }}>
+        <CardContent sx={{ p: 3 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: "repeat(2, 1fr)" },
+              gap: 2,
+            }}
+          >
             <TextField
               select
-              label="Location *"
-              value={form.location}
-              onChange={handleChange('location')}
-              fullWidth
-              InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.7)' } }}
-              sx={darkFieldSx}
+              label="Location"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              sx={fieldSx}
             >
-              {/* Only option as requested */}
               <MenuItem value="Houston">Houston</MenuItem>
             </TextField>
 
             <TextField
               select
               label="Cancer Type"
-              value={form.cancerType}
-              onChange={handleChange('cancerType')}
-              fullWidth
-              InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.7)' } }}
-              sx={darkFieldSx}
+              value={cancerType}
+              onChange={(e) => {
+                setCancerType(e.target.value as CancerType);
+                setFile(null);   // reset upload when switching type
+                setPred(null);   // reset results
+              }}
+              sx={fieldSx}
             >
-              <MenuItem value="breast">Breast Cancer</MenuItem>
-              <MenuItem value="brain">Brain Cancer</MenuItem>
+              <MenuItem value="brain">Brain</MenuItem>
+              <MenuItem value="breast">Breast</MenuItem>
             </TextField>
 
-            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
-              <TextField
-                label="Patient First Name *"
-                value={form.firstName}
-                onChange={handleChange('firstName')}
-                fullWidth
-                InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.7)' } }}
-                sx={darkFieldSx}
-              />
-              <TextField
-                label="Patient Last Name *"
-                value={form.lastName}
-                onChange={handleChange('lastName')}
-                fullWidth
-                InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.7)' } }}
-                sx={darkFieldSx}
-              />
-            </Box>
+            <TextField
+              label="First Name"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              sx={fieldSx}
+            />
+            <TextField
+              label="Last Name"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              sx={fieldSx}
+            />
 
-            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
-              <TextField
-                label="Patient Medical # *"
-                value={form.medicalId}
-                onChange={handleChange('medicalId')}
-                fullWidth
-                InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.7)' } }}
-                sx={darkFieldSx}
-              />
-              <TextField
-                label="Patient DOB *"
-                type="date"
-                value={form.dob}
-                onChange={handleChange('dob')}
-                fullWidth
-                InputLabelProps={{ shrink: true, sx: { color: 'rgba(255,255,255,0.7)' } }}
-                sx={darkFieldSx}
-              />
-            </Box>
-
-            <Button
-              onClick={handleNext}
-              sx={primaryButtonSx}
-              fullWidth
-            >
-              Next
-            </Button>
+            <TextField
+              label="Medical ID"
+              value={medicalId}
+              onChange={(e) => setMedicalId(e.target.value)}
+              sx={fieldSx}
+            />
+            <TextField
+              label="Date of Birth"
+              type="date"
+              value={dob}
+              onChange={(e) => setDob(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={fieldSx}
+            />
           </Box>
-        )}
 
-        {/* STEP 2: Upload + run model */}
-        {step === 2 && (
-          <Box sx={{ display: 'grid', gap: 3 }}>
-            <Typography sx={{ color: 'rgba(255,255,255,0.8)' }}>
-              Upload {form.cancerType === 'breast' ? 'Breast' : 'Brain'} imaging files
-            </Typography>
+          <Divider sx={{ borderColor: "rgba(255,255,255,0.08)", my: 3 }} />
 
+          {/* Upload appears only after cancerType + patient info are filled */}
+          {canUpload ? (
             <Box>
+              <Typography sx={{ mb: 1.2, color: "rgba(255,255,255,0.8)", fontWeight: 700 }}>
+                Upload {cancerType === "brain" ? "Brain (MRI/CT)" : "Breast (Mammography/Ultrasound)"} Scan
+              </Typography>
+
               <input
                 type="file"
-                multiple
-                accept="image/*"
-                onChange={(e) => setFiles(e.target.files)}
-                style={{ color: 'white' }}
+                accept=".png,.jpg,.jpeg"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                style={{ color: "white" }}
               />
-              <Typography sx={{ color: 'rgba(255,255,255,0.5)', mt: 1, fontSize: '0.9rem' }}>
-                Tip: You can upload multiple scans. The backend can fuse results for multi-scan cases.
-              </Typography>
-            </Box>
 
-            <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)' }} />
-
-            <Button
-              onClick={handleAnalyze}
-              disabled={loading}
-              sx={primaryButtonSx}
-              fullWidth
-            >
-              {loading ? (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <CircularProgress size={18} sx={{ color: '#0b0f19' }} />
-                  Analyzing...
-                </Box>
-              ) : (
-                'Run Scan'
-              )}
-            </Button>
-
-            {/* Results */}
-            {result && (
-              <Box
-                sx={{
-                  mt: 2,
-                  p: 3,
-                  borderRadius: 2,
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  backgroundColor: 'rgba(0,0,0,0.25)',
-                }}
-              >
-                <Typography sx={{ color: '#fff', fontWeight: 600, mb: 1 }}>
-                  Result
-                </Typography>
-                <Typography sx={{ color: 'rgba(255,255,255,0.75)' }}>
-                  Classification: <b>{result.classification}</b>
-                </Typography>
-                <Typography sx={{ color: 'rgba(255,255,255,0.75)' }}>
-                  Confidence: <b>{Math.round(result.confidence * 100)}%</b>
-                </Typography>
-
-                {result.localizationImageUrl && (
-                  <Box sx={{ mt: 2 }}>
-                    <Typography sx={{ color: 'rgba(255,255,255,0.75)', mb: 1 }}>
-                      Localization / Grad-CAM
-                    </Typography>
-                    <Box
-                      component="img"
-                      src={result.localizationImageUrl}
-                      alt="Localization"
-                      sx={{ width: '100%', borderRadius: 2, border: '1px solid rgba(255,255,255,0.08)' }}
-                    />
-                  </Box>
-                )}
-
-                <Typography sx={{ color: 'rgba(255,255,255,0.5)', mt: 2, fontSize: '0.85rem' }}>
-                  This scan + patient data is saved to the EHR database automatically.
-                </Typography>
+              <Box sx={{ mt: 3 }}>
+                <Button
+                  variant="contained"
+                  disabled={!canSubmit || loading}
+                  onClick={onRun}
+                  sx={{
+                    backgroundColor: "#ff5c5c",
+                    textTransform: "none",
+                    borderRadius: 2,
+                    px: 4,
+                    py: 1.2,
+                    "&:hover": { backgroundColor: "#ff3b3b" },
+                  }}
+                >
+                  {loading ? "Running..." : "Run AI Scan"}
+                </Button>
               </Box>
-            )}
-          </Box>
-        )}
-      </Box>
+            </Box>
+          ) : (
+            <Alert severity="info" sx={{ backgroundColor: "rgba(255,255,255,0.05)", color: "#fff" }}>
+              Fill out patient information and select a cancer type to enable upload.
+            </Alert>
+          )}
+
+          {error && (
+            <Alert severity="error" sx={{ mt: 3 }}>
+              {error}
+            </Alert>
+          )}
+
+          {pred && (
+            <Box sx={{ mt: 4 }}>
+              <Typography sx={{ fontWeight: 900, color: "#9bb1ff", mb: 1 }}>
+                AI Result
+              </Typography>
+              <Typography sx={{ color: "rgba(255,255,255,0.85)" }}>
+                <b>Prediction:</b> {pred.prediction}
+              </Typography>
+              <Typography sx={{ color: "rgba(255,255,255,0.85)" }}>
+                <b>Confidence:</b> {(pred.confidence * 100).toFixed(1)}%
+              </Typography>
+
+              {pred.localization_url && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography sx={{ color: "rgba(255,255,255,0.7)", mb: 1 }}>
+                    Localization (Grad-CAM / Segmentation)
+                  </Typography>
+                  <Box
+                    component="img"
+                    src={pred.localization_url}
+                    alt="Localization"
+                    sx={{ width: "100%", maxWidth: 520, borderRadius: 2, border: "1px solid rgba(255,255,255,0.12)" }}
+                  />
+                </Box>
+              )}
+            </Box>
+          )}
+        </CardContent>
+      </Card>
     </Box>
-  )
+  );
 }
 
-const darkFieldSx = {
-  '& .MuiInputBase-root': {
-    color: '#fff',
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    borderRadius: '10px',
-  },
-  '& .MuiOutlinedInput-notchedOutline': {
-    borderColor: 'rgba(255,255,255,0.18)',
-  },
-  '&:hover .MuiOutlinedInput-notchedOutline': {
-    borderColor: 'rgba(255,255,255,0.28)',
-  },
-}
-
-const primaryButtonSx = {
-  backgroundColor: '#ff5c5c',
-  color: '#0b0f19',
-  fontWeight: 600,
-  py: 1.4,
-  borderRadius: '10px',
-  textTransform: 'none',
-  '&:hover': { backgroundColor: '#ff3b3b' },
-}
+const fieldSx = {
+  "& .MuiInputBase-root": { color: "#fff", borderRadius: 2 },
+  "& label": { color: "rgba(255,255,255,0.65)" },
+  "& fieldset": { borderColor: "rgba(255,255,255,0.12)" },
+};
